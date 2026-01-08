@@ -1,0 +1,9 @@
+[submodule "lwip"]
+	path = lwip
+	url = https://github.com/lwip-tcpip/lwip.git
+[submodule "libcoap"]
+	path = libcoap
+	url = https://github.com/obgm/libcoap.git
+[submodule "libcoap-minimal"]
+	path = libcoap-minimal
+	url = https://github.com/obgm/libcoap-minimal.git
