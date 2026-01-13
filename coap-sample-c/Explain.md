@@ -12,6 +12,190 @@
 
 ## Client サンプルコード
 
+```c
+/* minimal CoAP client
+ *
+ * Copyright (C) 2018-2024 Olaf Bergmann <bergmann@tzi.org>
+ */
+
+/*
+ * The client can be run as
+ *   ./client
+ * in which case the CoAP URI to make the request against is defined
+ * by COAP_CLIENT_URI, or
+ *   ./client CoAP_Uri
+ * where CoAP_Uri is a correctly formatted CoAP URI.
+ */
+
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+
+#include <coap3/coap.h>
+
+#ifndef COAP_CLIENT_URI
+// #define COAP_CLIENT_URI "coap://coap.me/hello"
+#define COAP_CLIENT_URI "coap://coap.me/path/sub1"
+#endif
+
+#define BUFSIZE 100
+
+static int have_response = 0;
+
+coap_response_t response_handler_sample(coap_session_t *session, const coap_pdu_t *sent, const coap_pdu_t *received, const coap_mid_t mid) {
+  size_t len;
+  const uint8_t *databuf;
+  size_t offset;
+  size_t total;
+
+  have_response = 1;
+  coap_show_pdu(COAP_LOG_WARN, received);
+  if (coap_get_data_large(received, &len, &databuf, &offset, &total)) {
+    fwrite(databuf, 1, len, stdout);
+    fwrite("\n", 1, 1, stdout);
+  }
+  return COAP_RESPONSE_OK;
+}
+
+int main(int argc, char *argv[]) {
+  coap_context_t *ctx = NULL;
+  coap_session_t *session = NULL;
+  coap_optlist_t *optlist = NULL;
+  coap_address_t dst;
+  coap_addr_info_t *addr_info = NULL;
+  coap_pdu_t *pdu = NULL;
+  int result = EXIT_FAILURE;;
+  int len;
+  int res;
+  unsigned int wait_ms;
+  coap_uri_t uri;
+  const char *coap_uri = COAP_CLIENT_URI;
+  int is_mcast;
+  unsigned char scratch[BUFSIZE];
+
+  /* Support run-time defining of CoAP URIs */
+  if (argc > 1) {
+    coap_uri = argv[1];
+  }
+
+  /* Initialize libcoap library */
+  coap_startup();
+
+  /* Set logging level */
+  coap_set_log_level(COAP_LOG_WARN);
+
+  /* Parse the URI */
+  len = coap_split_uri((const unsigned char *)coap_uri, strlen(coap_uri), &uri);
+  if (len != 0) {
+    coap_log_warn("Failed to parse uri %s\n", coap_uri);
+    goto finish;
+  }
+
+  /* resolve destination address where server should be sent */
+  len = 0;
+
+  addr_info = coap_resolve_address_info(&uri.host, uri.port, uri.port, uri.port,
+                                        uri.port, AF_UNSPEC, (1 << uri.scheme),
+                                        COAP_RESOLVE_TYPE_REMOTE);
+  if (addr_info) {
+      len = 1;
+      dst = addr_info->addr;
+  }
+
+  coap_free_address_info(addr_info);
+
+  if (len <= 0) {
+      coap_log_warn("Failed to resolve address %*.*s\n", (int)uri.host.length,
+                  (int)uri.host.length, (const char *)uri.host.s);
+      goto finish;
+  }
+  is_mcast = coap_is_mcast(&dst);
+  
+  /* create CoAP context and a client session */
+  if (!(ctx = coap_new_context(NULL))) {
+    coap_log_emerg("cannot create libcoap context\n");
+    goto finish;
+  }
+  /* Support large responses */
+  coap_context_set_block_mode(ctx, COAP_BLOCK_USE_LIBCOAP | COAP_BLOCK_SINGLE_BODY);
+
+  if (uri.scheme == COAP_URI_SCHEME_COAP) {
+    session = coap_new_client_session(ctx, NULL, &dst,
+                                      COAP_PROTO_UDP);
+  } else if (uri.scheme == COAP_URI_SCHEME_COAP_TCP) {
+    session = coap_new_client_session(ctx, NULL, &dst,
+                                      COAP_PROTO_TCP);
+  }
+  if (!session) {
+    coap_log_emerg("cannot create client session\n");
+    goto finish;
+  }
+
+  /* coap_register_response_handler(ctx, response_handler); */
+  coap_register_response_handler(ctx, response_handler_sample);
+  /* construct CoAP message */
+  pdu = coap_pdu_init(is_mcast ? COAP_MESSAGE_NON : COAP_MESSAGE_CON,
+                      COAP_REQUEST_CODE_GET,
+                      coap_new_message_id(session),
+                      coap_session_max_pdu_size(session));
+  if (!pdu) {
+    coap_log_emerg("cannot create PDU\n");
+    goto finish;
+  }
+
+  /* Add option list (which will be sorted) to the PDU */
+  len = coap_uri_into_options(&uri, &dst, &optlist, 1, scratch, sizeof(scratch));
+  if (len) {
+    coap_log_warn("Failed to create options\n");
+    goto finish;
+  }
+
+  if (optlist) {
+    res = coap_add_optlist_pdu(pdu, &optlist);
+    if (res != 1) {
+      coap_log_warn("Failed to add options to PDU\n");
+      goto finish;
+    }
+  }
+
+  coap_show_pdu(COAP_LOG_WARN, pdu);
+
+  /* and send the PDU */
+  if (coap_send(session, pdu) == COAP_INVALID_MID) {
+    coap_log_err("cannot send CoAP pdu\n");
+    goto finish;
+  }
+
+  wait_ms = (coap_session_get_default_leisure(session).integer_part + 1) * 1000;
+
+  while (have_response == 0 || is_mcast) {
+    res = coap_io_process(ctx, 1000);
+    if (res >= 0) {
+      if (wait_ms > 0) {
+        if ((unsigned)res >= wait_ms) {
+          fprintf(stdout, "timeout\n");
+          break;
+        } else {
+          wait_ms -= res;
+        }
+      }
+    }
+  }
+
+  result = EXIT_SUCCESS;
+
+finish:
+  coap_delete_optlist(optlist);
+  coap_session_release(session);
+  coap_free_context(ctx);
+  coap_cleanup();
+
+  return result;
+}
+```
+
+### Client サンプルコード内容説明
+
 サンプルコードを例に挙げて，ソースコードを説明する
 
 1. 変数宣言
@@ -294,6 +478,131 @@
     ```
 
 ## Server サンプルコード
+
+```c
+/* minimal CoAP server
+ *
+ * Copyright (C) 2018-2024 Olaf Bergmann <bergmann@tzi.org>
+ */
+
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdbool.h>
+
+#include <coap3/coap.h>
+
+/*
+ * This server listens to Unicast CoAP traffic coming in on port 5683 and handles it
+ * as appropriate.
+ *
+ * If support for multicast traffic is not required, comment out the COAP_LISTEN_MCAST_IPV*
+ * definitions.
+ */
+
+#define COAP_LISTEN_UCAST_IP "::"
+
+#define COAP_LISTEN_MCAST_IPV4 "224.0.1.187"
+#define COAP_LISTEN_MCAST_IPV6 "ff02::fd"
+
+void hello_handler(coap_resource_t *resource,coap_session_t *session, const coap_pdu_t *request, const coap_string_t *query, coap_pdu_t *response) {
+  coap_show_pdu(COAP_LOG_WARN, request);
+  coap_pdu_set_code(response, COAP_RESPONSE_CODE_CONTENT);
+  coap_add_data(response, 5,
+                (const uint8_t *)"world");
+  coap_show_pdu(COAP_LOG_WARN, response);
+}
+
+void my_hello_handler(coap_resource_t *resource,coap_session_t *session, const coap_pdu_t *request, const coap_string_t *query, coap_pdu_t *response) {
+  coap_show_pdu(COAP_LOG_WARN, request);
+  coap_pdu_set_code(response, COAP_RESPONSE_CODE_CONTENT);
+  coap_add_data(response, 8, (const uint8_t *)"my world");
+  coap_show_pdu(COAP_LOG_WARN, response);
+}
+
+int main(void) {
+  coap_context_t  *ctx = NULL;
+  coap_resource_t *resource = NULL;
+  int result = EXIT_FAILURE;;
+  uint32_t scheme_hint_bits;
+  coap_addr_info_t *info = NULL;
+  coap_addr_info_t *info_list = NULL;
+  coap_str_const_t *my_address = coap_make_str_const(COAP_LISTEN_UCAST_IP);
+  bool have_ep = false;
+
+  /* Initialize libcoap library */
+  coap_startup();
+
+  /* Set logging level */
+  coap_set_log_level(COAP_LOG_WARN);
+
+  /* Create CoAP context */
+  ctx = coap_new_context(NULL);
+  if (!ctx) {
+    coap_log_emerg("cannot initialize context\n");
+    goto finish;
+  }
+
+  /* Let libcoap do the multi-block payload handling (if any) */
+  coap_context_set_block_mode(ctx, COAP_BLOCK_USE_LIBCOAP|COAP_BLOCK_SINGLE_BODY);
+
+  scheme_hint_bits = coap_get_available_scheme_hint_bits(0, 0, COAP_PROTO_NONE);
+  info_list = coap_resolve_address_info(my_address, 0, 0, 0, 0,
+                                        0,
+                                        scheme_hint_bits, COAP_RESOLVE_TYPE_LOCAL);
+  /* Create CoAP listening endpoint(s) */
+  for (info = info_list; info != NULL; info = info->next) {
+    coap_endpoint_t *ep;
+
+    ep = coap_new_endpoint(ctx, &info->addr, info->proto);
+    if (!ep) {
+      coap_log_warn("cannot create endpoint for CoAP proto %u\n",
+                    info->proto);
+    } else {
+      have_ep = true;
+    }
+  }
+  coap_free_address_info(info_list);
+  if (have_ep == false) {
+    coap_log_err("No context available for interface '%s'\n",
+                 (const char *)my_address->s);
+    goto finish;
+  }
+
+  /* Add in Multicast listening as appropriate */
+#ifdef COAP_LISTEN_MCAST_IPV4
+  coap_join_mcast_group_intf(ctx, COAP_LISTEN_MCAST_IPV4, NULL);
+#endif /* COAP_LISTEN_MCAST_IPV4 */
+#ifdef COAP_LISTEN_MCAST_IPV6
+  coap_join_mcast_group_intf(ctx, COAP_LISTEN_MCAST_IPV6, NULL);
+#endif /* COAP_LISTEN_MCAST_IPV6 */
+
+  /* Create a resource that the server can respond to with information */
+  resource = coap_resource_init(coap_make_str_const("hello"), 0);
+  coap_register_handler(resource, COAP_REQUEST_GET, hello_handler);
+  coap_add_resource(ctx, resource);
+
+  /* Create another resource that the server can respond to with information */
+  resource = coap_resource_init(coap_make_str_const("hello/my"), 0);
+  coap_register_handler(resource, COAP_REQUEST_GET, my_hello_handler);
+  coap_add_resource(ctx, resource);
+
+  /* Handle any libcoap I/O requirements */
+  while (true) {
+    coap_io_process(ctx, COAP_IO_WAIT);
+  }
+
+  result = EXIT_SUCCESS;
+finish:
+
+  coap_free_context(ctx);
+  coap_cleanup();
+
+  return result;
+}
+```
+
+### Server サンプルコード内容説明
 
 1. 変数の宣言
 
