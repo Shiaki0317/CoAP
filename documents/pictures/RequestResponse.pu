@@ -1,0 +1,34 @@
+@startuml Request-Response
+
+title リクエスト・レスポンス
+
+note over Client,Server
+    ピギーバック応答を使用した基本的なGET要求
+end note
+Client -> Server : CON [0xbc90] GET /temperature (Token 0x71)
+Server -> Client : ACK [0xbc90] 2.05 Content (Token 0x71) "22.5 C"
+
+note over Client,Server
+    ピギーバック応答を使用した基本的なGET要求 : 4.04（Not Found）応答
+end note
+Client -> Server : CON [0xbc91] GET /temperature (Token 0x72)
+Server -> Client : ACK [0xbc91] 4.04 Content (Token 0x72) "Not found"
+
+note over Client,Server
+    個別の応答を伴うGET要求
+end note
+Client -> Server : CON [0x7a10] GET /temperature (Token 0x73)
+Server -> Client : ACK [0x7a10]
+Server -> Client : CON [0x23bb] 2.05 Content (Token 0x73) "22.5 C"
+note right
+    ACKの送信後に時間経過して応答を送信
+end note
+Client -> Server : ACK [0x23bb]
+
+note over Client,Server
+    確認不可能なメッセージで実行される要求と応答
+end note
+Client -> Server : NON [0x7a11] GET /temperature (Token 0x74)
+Server -> Client : NON [0x23bc] 2.05 Content (Token 0x74) "22.5 C"
+
+@enduml
