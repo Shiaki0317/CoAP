@@ -1,2 +1,5 @@
-# .vscode
+# vscode設定内容
 .vscode
+
+# .oファイル
+*.o

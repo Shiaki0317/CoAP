@@ -1,5 +1,28 @@
 # ソースコード説明
 
+説明対象は以下の2つのサンプルコードとする。
+
+- [sample_client](./sample_client/sample_client.c)
+- [sample_server](./sample_server/sample_server.c)
+
+## 動作確認手順
+
+動作確認時には上記対象のコードをビルドを行い、実行する。
+インストール時にはlibcoapのビルドが必要となるため、[インストール手順](https://libcoap.net/install.html)を参考にしてビルド及びインストール作業まで完了させる。
+インストール完了後には、以下のビルドコマンドにて実行する。
+- ```gcc -Wall -Wextra -std=c11 -g -O0 -I/usr/local/include -lcoap-3 -c ./sample_client/sample_client.c -o sample_client/sample_client```
+- ```gcc -Wall -Wextra -std=c11 -g -I/usr/local/include ./sample_server/sample_server.c -o ./sample_server/sample_server -lcoap-3```
+
+ビルド完了後、以下の順序にて実行し、動作確認を行う。
+
+1. 新規でターミナルを起動
+2. コマンド```./sample_server/sample_server```を実行
+3. 以下のコマンドのいずれかを実行
+    - ```./sample_client/sample_client /hello``` : ローカルのCoAPサーバにURI"/hello"にCoAPリクエスト送信
+    - ```./sample_client/sample_client /hello/my``` : ローカルのCoAPサーバにURI"/hello/mt"にCoAPリクエスト送信
+    - ```./sample_client/sample_client``` : CoAPサーバ"coap.me"にURI"/path/sub1"(COAP_CLIENT_URIの設定に依存)にCoAPリクエスト送信
+4. "sample_client"を実行したコマンドラインにてリクエスト送信内容・レスポンス受信結果を表示し、ローカルサーバにてCoAPリクエストを受信した場合にはリクエスト受信内容・レスポンス送信内容を表示する。
+
 ## 用語定義
 
 | 用語         | 説明                                                                                                                                |
@@ -616,7 +639,7 @@ finish:
    coap_addr_info_t *info = NULL;                                               // アドレス情報
    coap_addr_info_t *info_list = NULL;                                          // アドレス情報を格納したリスト
    coap_str_const_t *my_address = coap_make_str_const(COAP_LISTEN_UCAST_IP);    // 受信待ちのアドレス(文字列)
-   bool have_ep = false;                                                        //
+   bool have_ep = false;                                                        // エンドポイントの生成状態
    ```
 
 2. 初期化・ログレベル設定
