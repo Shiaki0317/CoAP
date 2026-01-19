@@ -20,7 +20,7 @@
 
 #ifndef COAP_CLIENT_URI
 // #define COAP_CLIENT_URI "coap://coap.me/hello"
-#define COAP_CLIENT_URI "coap://coap.me/large"
+#define COAP_CLIENT_URI "coap://coap.me/path/sub1"
 #endif
 
 #define BUFSIZE 100
@@ -49,7 +49,7 @@ int main(int argc, char *argv[]) {
   coap_address_t dst;
   coap_addr_info_t *addr_info = NULL;
   coap_pdu_t *pdu = NULL;
-  int result = EXIT_FAILURE;
+  int result = EXIT_FAILURE;;
   int len;
   int res;
   unsigned int wait_ms;

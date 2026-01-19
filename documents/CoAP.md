@@ -39,11 +39,13 @@ CoAP の拡張に関わる RFC として以下のものが存在し、更に拡�
 | ペイロードマーカー   | 0 or 8 ビット | ペイロードが存在する場合にのみ存在し，オプションとペイロードの区切りを明示するものとなる                                                           |
 | ペイロード           | Variable      | リクエストやレスポンス時に格納されるデータ                                                                                                         |
 
-このときの CoAP で利用するコードやオプション番号などは[CoAP 関連情報](https://www.iana.org/assignments/core-parameters/core-parameters.xhtml#codes)に記載しているため，個々の内容を確認する．
+このときの CoAP で利用するコードやオプション番号などは[CoAP 関連情報](https://www.iana.org/assignments/core-parameters/core-parameters.xhtml#codes)に記載しているため，この内容を確認する．
 
 ### メッセージ ID と TOKEN の違い
 
 メッセージ ID は"再送・ACK・重複排除"といったリクエスト・レスポンスでのエラー処理を担っている．以下のシーケンスは再送処理を実行したときの例となり，ここで再送の前後でのメッセージ ID は変わっておらず，同じメッセージ ID を利用している．Server から Client にレスポンスを返す際にはすぐに ACK を返すのではなく，ACK の応答を遅らせて温度データを電文に載せてレスポンスとして返している(piggybacked response)ことを認識しておく．
+
+※ 以降の図などで、"T"は"Token", "MID"は"メッセージ ID"を表す。
 
 ```plantuml
 @startuml Sequence
@@ -81,7 +83,7 @@ Client --> Server : ACK Empty (MID=0x8888)
 
 ### CoAP 要求/応答コードの詳細
 
-Code の詳細は[RFC7252 : 12.1 章](https://datatracker.ietf.org/doc/html/rfc7252#section-12.1)に記載されている．その時のコード一覧は以下となる．
+CoAP 要求/応答コードの詳細は[RFC7252 : 12.1 章](https://datatracker.ietf.org/doc/html/rfc7252#section-12.1)に記載されている．また、下記の図の"X.YY"において CoAP 要求/応答コードの 8 ビットの内で先頭の 3 ビットが"X"、残りの 5 ビットが"YY"を表す。その時のコード一覧は以下となる．
 
 | Code      | 内容                                                          |
 | --------- | ------------------------------------------------------------- |
@@ -132,7 +134,9 @@ Code の詳細は[RFC7252 : 12.1 章](https://datatracker.ietf.org/doc/html/rfc7
 | 5.04 | Gateway Timeout            | [RFC7252](https://www.rfc-editor.org/rfc/rfc7252.html) |
 | 5.05 | Proxying Not Supported     | [RFC7252](https://www.rfc-editor.org/rfc/rfc7252.html) |
 
-また、サブレジストリに追加される場合には[RFC5226](https://www.rfc-editor.org/rfc/rfc5226.html)を参照する． ※ [RFC5226](https://www.rfc-editor.org/rfc/rfc5226.html)は廃止されており、修正版は[RFC8126](https://www.rfc-editor.org/rfc/rfc8126.html)に記載されている．
+また、サブレジストリに追加される場合には[RFC5226](https://www.rfc-editor.org/rfc/rfc5226.html)を参照する．
+
+※ [RFC5226](https://www.rfc-editor.org/rfc/rfc5226.html)は廃止されており、修正版は[RFC8126](https://www.rfc-editor.org/rfc/rfc8126.html)として公開されている．
 
 ## CoAP オプションメッセージフォーマット
 
@@ -231,13 +235,13 @@ end note
 
    これを解釈すると以下のデータ構造となる．
 
-   | 電文                 | ブロック             | 内容                                                            |
-   | -------------------- | -------------------- | --------------------------------------------------------------- |
-   | 40 01 10 00          | 固定データ長         | 40 : Ver=1,CON,トークン長=0<br>01 : GET<br>10 00 : MID = 0x1000 |
-   | 61 00                | オプション(Observe)  | Delta=6<br>Length=1<br>value=0(登録)                            |
-   | 51 73 65 6E 73 6F 72 | オプション(Uri-Path) | Delta=11-6=5<br>Length=1<br>Value=sensor                        |
-   | 04 74 65 6D 70       | オプション(Uri-Path) | Delta=11-11=0<br>Length=4<br>Value=temp                         |
-   | 61 60                | オプション(Accept)   | Delta=17-11=6<br>Length=1<br>Value=60(CBOR)                     |
+   | 電文                 | ブロック             | 内容                                                               |
+   | -------------------- | -------------------- | ------------------------------------------------------------------ |
+   | 40 01 10 00          | 固定データ長         | 40 : Ver=1, CON, トークン長=0<br>01 : GET<br> 10 00 : MID = 0x1000 |
+   | 61 00                | オプション(Observe)  | Delta=6<br>Length=1<br>value=0(登録)                               |
+   | 51 73 65 6E 73 6F 72 | オプション(Uri-Path) | Delta=11-6=5<br>Length=1<br>Value=sensor                           |
+   | 04 74 65 6D 70       | オプション(Uri-Path) | Delta=11-11=0<br>Length=4<br>Value=temp                            |
+   | 61 60                | オプション(Accept)   | Delta=17-11=6<br>Length=1<br>Value=60(CBOR)                        |
 
 2. ACK 2.05 Content
 3. CON 2.05 Content
@@ -302,7 +306,21 @@ IPv4 での IP ヘッダの場合には電文内にプロトコル番号が用�
 
 ### Observe
 
-### Blockwise Transfer
+### ブロック転送
+
+詳細の内容は[ブロック転送](./BlockTransfer.md)を参照する．
+
+ブロック転送に関わるRFCは以下となる．
+
+- [RFC7959: Block-Wise Transfers in the Constrained Application Protocol (CoAP)](https://tex2e.github.io/rfc-translater/html/rfc7959.html)
+- [RFC9177: Constrained Application Protocol (CoAP) Block-Wise Transfer Options Supporting Robust Transmission](https://tex2e.github.io/rfc-translater/html/rfc9177.html)
+
+### セキュリティ
+
+セキュリティに関わるRFCは以下となる．
+
+- [RFC8323: CoAP (Constrained Application Protocol) over TCP, TLS, and WebSockets](https://tex2e.github.io/rfc-translater/html/rfc8323.html)
+- [RFC8613: Object Security for Constrained RESTful Environments (OSCORE)](https://tex2e.github.io/rfc-translater/html/rfc8613.html)
 
 ## 参考資料
 

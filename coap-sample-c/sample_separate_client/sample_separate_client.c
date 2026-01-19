@@ -20,14 +20,14 @@
 
 #ifndef COAP_CLIENT_URI
 // #define COAP_CLIENT_URI "coap://coap.me/hello"
-#define COAP_CLIENT_URI "coap://coap.me/large"
+#define COAP_CLIENT_URI "coap://coap.me/sample_data"
 #endif
 
 #define BUFSIZE 100
 
 static int have_response = 0;
 
-coap_response_t response_handler_sample(coap_session_t *session, const coap_pdu_t *sent, const coap_pdu_t *received, const coap_mid_t mid) {
+coap_response_t response_handler_request(coap_session_t *session, const coap_pdu_t *sent, const coap_pdu_t *received, const coap_mid_t mid) {
   size_t len;
   const uint8_t *databuf;
   size_t offset;
@@ -43,13 +43,13 @@ coap_response_t response_handler_sample(coap_session_t *session, const coap_pdu_
 }
 
 int main(int argc, char *argv[]) {
-  coap_context_t *ctx = NULL;
+  coap_context_t *client_ctx, *server_ctx = NULL;
   coap_session_t *session = NULL;
   coap_optlist_t *optlist = NULL;
   coap_address_t dst;
   coap_addr_info_t *addr_info = NULL;
   coap_pdu_t *pdu = NULL;
-  int result = EXIT_FAILURE;
+  int result = EXIT_FAILURE;;
   int len;
   int res;
   unsigned int wait_ms;
@@ -97,18 +97,18 @@ int main(int argc, char *argv[]) {
   is_mcast = coap_is_mcast(&dst);
   
   /* create CoAP context and a client session */
-  if (!(ctx = coap_new_context(NULL))) {
+  if (!(client_ctx = coap_new_context(NULL))) {
     coap_log_emerg("cannot create libcoap context\n");
     goto finish;
   }
   /* Support large responses */
-  coap_context_set_block_mode(ctx, COAP_BLOCK_USE_LIBCOAP | COAP_BLOCK_SINGLE_BODY);
+  coap_context_set_block_mode(client_ctx, COAP_BLOCK_USE_LIBCOAP | COAP_BLOCK_SINGLE_BODY);
 
   if (uri.scheme == COAP_URI_SCHEME_COAP) {
-    session = coap_new_client_session(ctx, NULL, &dst,
+    session = coap_new_client_session(client_ctx, NULL, &dst,
                                       COAP_PROTO_UDP);
   } else if (uri.scheme == COAP_URI_SCHEME_COAP_TCP) {
-    session = coap_new_client_session(ctx, NULL, &dst,
+    session = coap_new_client_session(client_ctx, NULL, &dst,
                                       COAP_PROTO_TCP);
   }
   if (!session) {
@@ -116,8 +116,8 @@ int main(int argc, char *argv[]) {
     goto finish;
   }
 
-  /* coap_register_response_handler(ctx, response_handler); */
-  coap_register_response_handler(ctx, response_handler_sample);
+  /* coap_register_response_handler(client_ctx, response_handler); */
+  coap_register_response_handler(client_ctx, response_handler_request);
   /* construct CoAP message */
   pdu = coap_pdu_init(is_mcast ? COAP_MESSAGE_NON : COAP_MESSAGE_CON,
                       COAP_REQUEST_CODE_GET,
@@ -154,7 +154,7 @@ int main(int argc, char *argv[]) {
   wait_ms = (coap_session_get_default_leisure(session).integer_part + 1) * 1000;
 
   while (have_response == 0 || is_mcast) {
-    res = coap_io_process(ctx, 1000);
+    res = coap_io_process(client_ctx, 1000);
     if (res >= 0) {
       if (wait_ms > 0) {
         if ((unsigned)res >= wait_ms) {
@@ -172,7 +172,7 @@ int main(int argc, char *argv[]) {
 finish:
   coap_delete_optlist(optlist);
   coap_session_release(session);
-  coap_free_context(ctx);
+  coap_free_context(client_ctx);
   coap_cleanup();
 
   return result;
