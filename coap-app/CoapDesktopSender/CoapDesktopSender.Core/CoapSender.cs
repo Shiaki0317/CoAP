@@ -1,6 +1,9 @@
-using System.Text;
+using System;
+using System.IO;
 using System.Reflection;
-
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace CoapDesktopSender.Core;
 
@@ -23,7 +26,10 @@ public sealed class CoapSender
     {
         var log = new StringBuilder();
 
-        // ---- CreateRequest: CoAP.Request を反射で生成 ----
+        dynamic? lastReq = null;
+        dynamic? lastRes = null;
+        byte[]? lastResPayload = null;
+
         dynamic CreateRequest(string m)
         {
             var reqType = FindTypeByFullName("CoAP.Request")
@@ -34,7 +40,7 @@ public sealed class CoapSender
             dynamic req = Activator.CreateInstance(reqType, methodValue)
                 ?? throw new InvalidOperationException("Cannot create CoAP.Request instance");
 
-            // URI プロパティ名差異吸収（URI / Uri）
+            // URI / Uri 吸収
             if (!TrySet(req, "URI", uri) && !TrySet(req, "Uri", uri))
                 throw new InvalidOperationException("Cannot set URI on CoAP request (URI/Uri property not found).");
 
@@ -44,30 +50,19 @@ public sealed class CoapSender
                 dynamic mt = GetMessageType(confirmable ? "CON" : "NON");
                 TrySet(req, "Type", mt);
             }
-            catch { /* ignore */ }
-
-            // Observe（存在する実装のみ）
-            if (TryInvoke(req, "MarkObserve"))
-            {
-                if (!GetBoolSafe(enable: true, flag: false)) { } // no-op
-            }
-            if (HasProperty(req, "Observe") && GetBoolSafe(enable: true, flag: false))
-            {
-                // 多くは MarkObserve() を使う。ここは温存。
-            }
+            catch { }
 
             return req;
         }
 
         // ---- Block1: payload 分割送信 ----
-        if (enableBlock1 && payload.Length > 0 && (method.Equals("POST", StringComparison.OrdinalIgnoreCase) || method.Equals("PUT", StringComparison.OrdinalIgnoreCase)))
+        if (enableBlock1 &&
+            payload.Length > 0 &&
+            (method.Equals("POST", StringComparison.OrdinalIgnoreCase) || method.Equals("PUT", StringComparison.OrdinalIgnoreCase)))
         {
-            var p = new BlockParam(block1Num, block1More, block1Szx);
-            int blockSize = p.BlockSize;
+            var bp = new BlockParam(block1Num, block1More, block1Szx);
+            int blockSize = bp.BlockSize;
             int num = 0;
-
-            dynamic? lastRes = null;
-            byte[]? lastPayload = null;
 
             for (int offset = 0; offset < payload.Length; offset += blockSize)
             {
@@ -79,20 +74,21 @@ public sealed class CoapSender
                 Array.Copy(payload, offset, slice, 0, len);
 
                 dynamic req = CreateRequest(method);
-                SetPayloadBytes(req, slice);
+                lastReq = req;
 
-                // Block1 option
+                SetPayloadBytes(req, slice);
                 AddOption(req, "Block1", Blockwise.Encode(num, more, block1Szx));
 
+                TryInvoke(req, "Send");
+
+                // Send後にMID/Tokenが確定する実装もあるので、ログ/summaryはSend後に取る
                 log.AppendLine($"[TX Block1] num={num} m={(more ? 1 : 0)} szx={block1Szx} size={slice.Length}");
                 log.AppendLine(CoapMessageFormat.FormatRequestSummary(req));
                 log.AppendLine(CoapMessageFormat.FormatOptions(req));
 
-                TryInvoke(req, "Send");
-
                 dynamic res = await WaitForResponseAsync(req, ct);
                 lastRes = res;
-                lastPayload = GetPayloadBytes(res);
+                lastResPayload = GetPayloadBytes(res);
 
                 log.AppendLine(CoapMessageFormat.FormatResponseSummary(res));
                 log.AppendLine(CoapMessageFormat.FormatOptions(res));
@@ -104,26 +100,32 @@ public sealed class CoapSender
             if (enableBlock2 && lastRes is not null)
             {
                 var combined = await ReceiveBlock2Async(uri, lastRes, block2Szx, log, ct);
-                return BuildResult(lastRes, combined, log);
+                return BuildResult(lastReq, lastRes, combined, log);
             }
 
-            return BuildResult(lastRes, lastPayload, log);
+            return BuildResult(lastReq, lastRes, lastResPayload, log);
         }
 
         // ---- 通常送信 ----
         {
             dynamic req = CreateRequest(method);
-            if (payload.Length > 0) SetPayloadBytes(req, payload);
+            lastReq = req;
 
-            // Block2 の “要求” を付けたい場合（任意）
+            if (payload.Length > 0)
+                SetPayloadBytes(req, payload);
+
+            // Block2 の要求（任意）
             if (enableBlock2)
                 AddOption(req, "Block2", Blockwise.Encode(block2Num, false, block2Szx));
+
+            TryInvoke(req, "Send");
 
             log.AppendLine(CoapMessageFormat.FormatRequestSummary(req));
             log.AppendLine(CoapMessageFormat.FormatOptions(req));
 
-            TryInvoke(req, "Send");
             dynamic res = await WaitForResponseAsync(req, ct);
+            lastRes = res;
+            lastResPayload = GetPayloadBytes(res);
 
             log.AppendLine(CoapMessageFormat.FormatResponseSummary(res));
             log.AppendLine(CoapMessageFormat.FormatOptions(res));
@@ -131,10 +133,10 @@ public sealed class CoapSender
             if (enableBlock2)
             {
                 var combined = await ReceiveBlock2Async(uri, res, block2Szx, log, ct);
-                return BuildResult(res, combined, log);
+                return BuildResult(lastReq, lastRes, combined, log);
             }
 
-            return BuildResult(res, GetPayloadBytes(res), log);
+            return BuildResult(lastReq, lastRes, lastResPayload, log);
         }
     }
 
@@ -157,11 +159,13 @@ public sealed class CoapSender
             int nextNum = b.Num + 1;
 
             dynamic req = CreateFollowUpGet(uri, nextNum, szx);
+
+            TryInvoke(req, "Send");
+
             log.AppendLine($"[TX Block2-GET] num={nextNum} szx={szx}");
             log.AppendLine(CoapMessageFormat.FormatRequestSummary(req));
             log.AppendLine(CoapMessageFormat.FormatOptions(req));
 
-            TryInvoke(req, "Send");
             dynamic res = await WaitForResponseAsync(req, ct);
 
             log.AppendLine(CoapMessageFormat.FormatResponseSummary(res));
@@ -193,8 +197,8 @@ public sealed class CoapSender
         }
     }
 
-    // ===== Result =====
-    private static CoapSendResult BuildResult(dynamic? response, byte[]? responsePayload, StringBuilder log)
+    // ===== Result（Request Summary/Options を確実に詰める） =====
+    private static CoapSendResult BuildResult(dynamic? request, dynamic? response, byte[]? responsePayload, StringBuilder log)
     {
         string? textLog = null;
         string? cborLog = null;
@@ -202,27 +206,19 @@ public sealed class CoapSender
 
         if (responsePayload is { Length: > 0 })
         {
-            // 1) Text (UTF-8で読めるか試す)
+            // Text
             try
             {
                 var txt = Encoding.UTF8.GetString(responsePayload);
-                if (!txt.Contains('\0'))
-                    textLog = txt;
+                if (!txt.Contains('\0')) textLog = txt;
             }
             catch { }
 
-            // 2) CBOR
-            try
-            {
-                cborLog = CborPrettyPrinter.PrettyPrint(responsePayload);
-            }
-            catch
-            {
-                cborLog = null;
-            }
+            // CBOR
+            try { cborLog = CborPrettyPrinter.PrettyPrint(responsePayload); } catch { }
 
-            // 3) Binary (always available)
-            binaryLog = HexDump.Dump(responsePayload);
+            // Binary
+            try { binaryLog = HexDump.Dump(responsePayload); } catch { binaryLog = Convert.ToHexString(responsePayload); }
         }
 
         return new CoapSendResult(
@@ -233,9 +229,9 @@ public sealed class CoapSender
             CborLog: cborLog,
             BinaryLog: binaryLog,
 
-            RequestSummary: null,
+            RequestSummary: request is null ? null : CoapMessageFormat.FormatRequestSummary(request),
             ResponseSummary: response is null ? null : CoapMessageFormat.FormatResponseSummary(response),
-            RequestOptions: null,
+            RequestOptions: request is null ? null : CoapMessageFormat.FormatOptions(request),
             ResponseOptions: response is null ? null : CoapMessageFormat.FormatOptions(response)
         );
     }
@@ -252,11 +248,10 @@ public sealed class CoapSender
             if (t.IsEnum) return Enum.Parse(t, m, ignoreCase: true);
 
             var v = t.GetField(m)?.GetValue(null)
-                    ?? t.GetProperty(m)?.GetValue(null);
+                 ?? t.GetProperty(m)?.GetValue(null);
             if (v is not null) return v;
         }
 
-        // 代替候補
         var alt = FindFirstTypeByNameCandidates(new[]
         {
             "CoAP.MethodType",
@@ -269,7 +264,7 @@ public sealed class CoapSender
             if (alt.IsEnum) return Enum.Parse(alt, m, ignoreCase: true);
 
             var v = alt.GetField(m)?.GetValue(null)
-                    ?? alt.GetProperty(m)?.GetValue(null);
+                 ?? alt.GetProperty(m)?.GetValue(null);
             if (v is not null) return v;
         }
 
@@ -286,7 +281,7 @@ public sealed class CoapSender
             if (t.IsEnum) return Enum.Parse(t, tname, ignoreCase: true);
 
             var v = t.GetField(tname)?.GetValue(null)
-                    ?? t.GetProperty(tname)?.GetValue(null);
+                 ?? t.GetProperty(tname)?.GetValue(null);
             if (v is not null) return v;
         }
 
@@ -301,41 +296,36 @@ public sealed class CoapSender
             if (alt.IsEnum) return Enum.Parse(alt, tname, ignoreCase: true);
 
             var v = alt.GetField(tname)?.GetValue(null)
-                    ?? alt.GetProperty(tname)?.GetValue(null);
+                 ?? alt.GetProperty(tname)?.GetValue(null);
             if (v is not null) return v;
         }
 
         throw new InvalidOperationException($"Cannot resolve CoAP message type. type='{type}'");
     }
 
-
     private static Type? FindTypeByFullName(string fullName)
     {
-        // 1) まずロード済みから探す
+        // 1) まずロード済みから
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
             var t = asm.GetType(fullName, throwOnError: false, ignoreCase: false);
             if (t is not null) return t;
         }
 
-        // 2) 参照アセンブリを片っ端からロードして探す（←ここが重要）
+        // 2) 参照アセンブリをロードして探す
         var current = typeof(CoapSender).Assembly;
         foreach (var an in current.GetReferencedAssemblies())
         {
             try
             {
-                // まだロードされていない参照DLLをロード
                 var asm = Assembly.Load(an);
                 var t = asm.GetType(fullName, throwOnError: false, ignoreCase: false);
                 if (t is not null) return t;
             }
-            catch
-            {
-                // 読み込み失敗は無視（環境依存/不要参照もある）
-            }
+            catch { }
         }
 
-        // 3) 最後に “CoAP を含む名前” っぽいものを追加でロードして探す（保険）
+        // 3) 追加保険
         foreach (var name in new[] { "CoAP", "CoAP.NET", "CoAPNet", "CoAPnet" })
         {
             try
@@ -359,9 +349,6 @@ public sealed class CoapSender
         }
         return null;
     }
-
-    private static bool HasProperty(dynamic obj, string propName)
-        => obj.GetType().GetProperty(propName) is not null;
 
     private static bool TrySet(dynamic obj, string propName, object value)
     {
@@ -388,10 +375,8 @@ public sealed class CoapSender
 
     private static void SetPayloadBytes(dynamic req, byte[] bytes)
     {
-        // CS1503(byte[] -> string)回避：byte[] を直接セットできる道だけ使う
         if (TrySet(req, "Payload", bytes)) return;
 
-        // どうしても SetPayload しかない実装向け（byte[] が取れる場合）
         var mi = req.GetType().GetMethod("SetPayload", new[] { typeof(byte[]) });
         if (mi is not null) { mi.Invoke(req, new object[] { bytes }); return; }
 
@@ -417,14 +402,12 @@ public sealed class CoapSender
         if (!TrySet(opt, "RawValue", raw) && !TrySet(opt, "Value", raw))
             throw new InvalidOperationException("Cannot set option raw bytes (RawValue/Value not found).");
 
-        // Options.Add(opt)
         try
         {
             msg.Options.Add(opt);
         }
         catch
         {
-            // Optionsが未初期化なら作る
             var setType = FindTypeByFullName("CoAP.OptionSet");
             if (setType is null)
                 throw new InvalidOperationException("Cannot find CoAP.OptionSet and cannot add options.");
@@ -463,7 +446,6 @@ public sealed class CoapSender
         {
             ct.ThrowIfCancellationRequested();
 
-            // WaitForResponse() が無い実装もあるので GetResponse() を試す
             var t = req.GetType();
             var mi = t.GetMethod("WaitForResponse", Type.EmptyTypes)
                   ?? t.GetMethod("GetResponse", Type.EmptyTypes);
@@ -476,6 +458,4 @@ public sealed class CoapSender
             return (dynamic)res;
         }, ct);
     }
-
-    private static bool GetBoolSafe(bool enable, bool flag) => enable && flag;
 }

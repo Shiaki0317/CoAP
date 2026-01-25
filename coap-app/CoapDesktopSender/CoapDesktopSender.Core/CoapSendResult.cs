@@ -3,7 +3,7 @@ namespace CoapDesktopSender.Core;
 public sealed record CoapSendResult(
     bool Ok,
 
-    // Raw combined log (TX/RX, blockwise, options, etc)
+    // TX/RX/Blockwise/Options など総合ログ
     string Log,
 
     // Payload logs
