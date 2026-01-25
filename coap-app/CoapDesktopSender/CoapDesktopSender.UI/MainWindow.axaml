@@ -1,9 +1,180 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        xmlns:core="clr-namespace:CoapDesktopSender.Core;assembly=CoapDesktopSender.Core"
         x:Class="CoapDesktopSender.UI.MainWindow"
-        Title="CoapDesktopSender.UI">
-    Welcome to Avalonia!
+        x:DataType="core:MainViewModel"
+        xmlns:ctrl="using:GroupBox.Avalonia.Controls"
+        Width="640" Height="480"
+        Title="CoAP Sender (Avalonia + .NET 8)">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+        <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" Margin="12">
+
+            <!-- URI / Method -->
+            <StackPanel Orientation="Horizontal" Grid.Row="0" Spacing="8">
+                <TextBlock Text="URI:" VerticalAlignment="Center"/>
+                <TextBox Width="560" Text="{Binding UriText}"/>
+
+                <TextBlock Text="Method:" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                <ComboBox Width="120"
+                            ItemsSource="{Binding Methods}"
+                            SelectedItem="{Binding Method}" />
+
+                <Button Content="Send"
+                        Padding="18,6"
+                        Margin="12,0,0,0"
+                        Command="{Binding SendCommand}"/>
+            </StackPanel>
+
+            <!-- Payload -->
+            <ctrl:GroupBox Header="Payload" Grid.Row="1" Margin="0,10,0,0">
+                <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto,Auto" Margin="10" RowSpacing="8" ColumnSpacing="12">
+
+                    <StackPanel Grid.Row="0" Grid.Column="0" Spacing="6">
+                        <RadioButton Content="None" IsChecked="{Binding IsPayloadNone}"/>
+                        <RadioButton Content="Text (UTF-8)" IsChecked="{Binding IsPayloadText}"/>
+                        <RadioButton Content="Binary (Hex)" IsChecked="{Binding IsPayloadHex}"/>
+                        <RadioButton Content="CBOR (JSON → CBOR)" IsChecked="{Binding IsPayloadCborJson}"/>
+                    </StackPanel>
+
+                    <TextBox Grid.Row="0" Grid.Column="1"
+                            Height="105"
+                            IsEnabled="{Binding IsPayloadText}"
+                            Text="{Binding PayloadText}"
+                            AcceptsReturn="True"/>
+
+                    <TextBox Grid.Row="1" Grid.Column="1"
+                            Height="105"
+                            IsEnabled="{Binding IsPayloadHex}"
+                            Text="{Binding PayloadHex}"
+                            AcceptsReturn="True"/>
+
+                    <TextBox Grid.Row="2" Grid.Column="1"
+                            Height="105"
+                            IsEnabled="{Binding IsPayloadCborJson}"
+                            Text="{Binding PayloadJson}"
+                            AcceptsReturn="True"/>
+                </Grid>
+            </ctrl:GroupBox>
+
+            <!-- Options -->
+            <ctrl:GroupBox Header="Options" Grid.Row="2" Margin="0,10,0,0">
+                <WrapPanel Margin="10" ItemWidth="220" ItemHeight="34">
+
+                    <RadioButton Content="CON (Confirmable)" IsChecked="{Binding UseCon}"/>
+                    <RadioButton Content="NON (Non-confirmable)" IsChecked="{Binding UseNon}"/>
+
+                    <CheckBox Content="Observe" IsChecked="{Binding UseObserve}"/>
+
+                    <CheckBox Content="Set Content-Format" IsChecked="{Binding SetContentFormat}"/>
+                    <ComboBox Width="220"
+                            IsEnabled="{Binding SetContentFormat}"
+                            ItemsSource="{Binding Formats}"
+                            SelectedItem="{Binding ContentFormatName}" />
+
+                    <CheckBox Content="Set Accept" IsChecked="{Binding SetAccept}"/>
+                    <ComboBox Width="220"
+                            IsEnabled="{Binding SetAccept}"
+                            ItemsSource="{Binding Formats}"
+                            SelectedItem="{Binding AcceptFormatName}" />
+                </WrapPanel>
+            </ctrl:GroupBox>
+
+
+            <StackPanel Grid.Row="3" Spacing="10">
+                <!-- ===== Blockwise ===== -->
+                <ctrl:GroupBox Header="Blockwise (RFC7959)">
+                    <StackPanel Spacing="6">
+
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <CheckBox Content="Enable Block1" IsChecked="{Binding EnableBlock1}" />
+                        <TextBlock Text="NUM" VerticalAlignment="Center"/>
+                        <TextBox Width="60" Text="{Binding Block1Num}" />
+                        <TextBlock Text="M" VerticalAlignment="Center"/>
+                        <CheckBox IsChecked="{Binding Block1More}" />
+                        <TextBlock Text="SZX" VerticalAlignment="Center"/>
+                        <TextBox Width="40" Text="{Binding Block1Szx}" />
+                        <TextBlock Text="(0..6 => 16..1024 bytes)" Opacity="0.7" VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <CheckBox Content="Enable Block2" IsChecked="{Binding EnableBlock2}" />
+                        <TextBlock Text="NUM" VerticalAlignment="Center"/>
+                        <TextBox Width="60" Text="{Binding Block2Num}" />
+                        <TextBlock Text="M" VerticalAlignment="Center"/>
+                        <CheckBox IsChecked="{Binding Block2More}" />
+                        <TextBlock Text="SZX" VerticalAlignment="Center"/>
+                        <TextBox Width="40" Text="{Binding Block2Szx}" />
+                    </StackPanel>
+
+                    </StackPanel>
+                </ctrl:GroupBox>
+
+                <!-- ===== Message Visualizer ===== -->
+                <ctrl:GroupBox Header="Message Inspector">
+                    <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Request Summary" FontWeight="Bold"/>
+                    <TextBlock Grid.Row="0" Grid.Column="1" Text="Response Summary" FontWeight="Bold"/>
+
+                    <TextBox Grid.Row="1" Grid.Column="0" Text="{Binding RequestSummary}" IsReadOnly="True" />
+                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ResponseSummary}" IsReadOnly="True" />
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Request Options" FontWeight="Bold"/>
+                    <TextBlock Grid.Row="2" Grid.Column="1" Text="Response Options" FontWeight="Bold"/>
+
+                    <TextBox Grid.Row="3" Grid.Column="0" Text="{Binding RequestOptions}" IsReadOnly="True" AcceptsReturn="True" Height="140"/>
+                    <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding ResponseOptions}" IsReadOnly="True" AcceptsReturn="True" Height="140"/>
+                    </Grid>
+                </ctrl:GroupBox>
+
+                <!-- ===== Response CBOR Tree ===== -->
+                <ctrl:GroupBox Header="Response CBOR (decoded / pretty)">
+                    <TextBox Text="{Binding ResponseCborTree}" AcceptsReturn="True" IsReadOnly="True" Height="220"/>
+                </ctrl:GroupBox>
+
+                <!-- ===== Traffic Log ===== -->
+                <ctrl:GroupBox Header="TX/RX Log (Blockwise included)">
+                    <TextBox Text="{Binding TrafficLog}" AcceptsReturn="True" IsReadOnly="True" Height="260"/>
+                </ctrl:GroupBox>
+            </StackPanel>
+
+            <!-- Log -->
+            <ctrl:GroupBox Grid.Row="4" Header="Response Payload">
+                <TabControl>
+
+                    <TabItem Header="Text">
+                    <ScrollViewer Height="220"
+                                    VerticalScrollBarVisibility="Auto"
+                                    HorizontalScrollBarVisibility="Auto">
+                        <TextBox Text="{Binding ResponseTextLog}"
+                                AcceptsReturn="True"
+                                IsReadOnly="True"/>
+                    </ScrollViewer>
+                    </TabItem>
+
+                    <TabItem Header="CBOR">
+                    <ScrollViewer Height="220"
+                                    VerticalScrollBarVisibility="Auto"
+                                    HorizontalScrollBarVisibility="Auto">
+                        <TextBox Text="{Binding ResponseCborLog}"
+                                AcceptsReturn="True"
+                                IsReadOnly="True"/>
+                    </ScrollViewer>
+                    </TabItem>
+
+                    <TabItem Header="Binary (octet-stream)">
+                    <ScrollViewer Height="220"
+                                    VerticalScrollBarVisibility="Auto"
+                                    HorizontalScrollBarVisibility="Auto">
+                        <TextBox Text="{Binding ResponseBinaryLog}"
+                                AcceptsReturn="True"
+                                IsReadOnly="True"
+                                FontFamily="Monospace"/>
+                    </ScrollViewer>
+                    </TabItem>
+
+                </TabControl>
+            </ctrl:GroupBox>
+
+        </Grid>
+    </ScrollViewer>
 </Window>

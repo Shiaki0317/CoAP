@@ -26,3 +26,4 @@ dotnet add CoapDesktopSender.UI reference CoapDesktopSender.Core
 dotnet add CoapDesktopSender.Core package Waher.Networking.CoAP --version 3.1.2
 dotnet add CoapDesktopSender.Core package PeterO.Cbor --version 4.5.5
 dotnet add CoapDesktopSender.UI package CommunityToolkit.Mvvm --version 8.4.0
+dotnet add CoapDesktopSender.UI package BinToss.GroupBox.Avalonia --version 1.0.0

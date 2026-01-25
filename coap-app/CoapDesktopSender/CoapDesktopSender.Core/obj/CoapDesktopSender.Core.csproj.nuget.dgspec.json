@@ -38,6 +38,14 @@
         "net8.0": {
           "targetAlias": "net8.0",
           "dependencies": {
+            "CoAP.NET": {
+              "target": "Package",
+              "version": "[1.0.4, )"
+            },
+            "CommunityToolkit.Mvvm": {
+              "target": "Package",
+              "version": "[8.4.0, )"
+            },
             "PeterO.Cbor": {
               "target": "Package",
               "version": "[4.5.5, )"

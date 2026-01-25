@@ -1,0 +1,24 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CoapDesktopSender.UI", "CoapDesktopSender.UI.csproj", "{1AB44C50-1290-13B4-3A11-AEBA86DDA99B}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{1AB44C50-1290-13B4-3A11-AEBA86DDA99B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1AB44C50-1290-13B4-3A11-AEBA86DDA99B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1AB44C50-1290-13B4-3A11-AEBA86DDA99B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1AB44C50-1290-13B4-3A11-AEBA86DDA99B}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {EC6FF07D-79B1-47DA-9F59-6CDA39EDE1E6}
+	EndGlobalSection
+EndGlobal
