@@ -15,3 +15,8 @@ coap-sample-c/sample_separate_client/sample_separate_client
 coap-sample-c/sample_separate_server/sample_separate_server
 coap-sample-c/sample_lwip_client/sample_lwip_client
 coap-sample-c/sample_lwip_server/sample_lwip_server
+
+# coap-app関連
+coap-app/**/bin
+coap-app/**/obj/Debug
+coap-app/**/obj/Release
