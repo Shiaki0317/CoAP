@@ -1,5 +1,3 @@
-using System;
-
 namespace CoapDesktopSender.Core;
 
 public readonly record struct BlockParam(int Num, bool More, int Szx)

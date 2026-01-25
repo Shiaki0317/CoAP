@@ -7,7 +7,7 @@
         Width="640" Height="480"
         Title="CoAP Sender (Avalonia + .NET 8)">
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
-        <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" Margin="12">
+        <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" Margin="12">
 
             <!-- URI / Method -->
             <StackPanel Orientation="Horizontal" Grid.Row="0" Spacing="8">
@@ -25,8 +25,17 @@
                         Command="{Binding SendCommand}"/>
             </StackPanel>
 
+            <!-- Timeout / MaxRetries -->
+            <StackPanel Orientation="Horizontal" Grid.Row="1" Spacing="8">
+                <TextBlock Text="Timeout(ms)" VerticalAlignment="Center"/>
+                <TextBox Width="90" Text="{Binding TimeoutMs}"/>
+
+                <TextBlock Text="MaxRetries" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                <TextBox Width="50" Text="{Binding MaxRetries}"/>
+            </StackPanel>
+
             <!-- Payload -->
-            <ctrl:GroupBox Header="Payload" Grid.Row="1" Margin="0,10,0,0">
+            <ctrl:GroupBox Header="Payload" Grid.Row="2" Margin="0,10,0,0">
                 <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto,Auto" Margin="10" RowSpacing="8" ColumnSpacing="12">
 
                     <StackPanel Grid.Row="0" Grid.Column="0" Spacing="6">
@@ -57,7 +66,7 @@
             </ctrl:GroupBox>
 
             <!-- Options -->
-            <ctrl:GroupBox Header="Options" Grid.Row="2" Margin="0,10,0,0">
+            <ctrl:GroupBox Header="Options" Grid.Row="3" Margin="0,10,0,0">
                 <WrapPanel Margin="10" ItemWidth="220" ItemHeight="34">
 
                     <RadioButton Content="CON (Confirmable)" IsChecked="{Binding UseCon}"/>
@@ -80,7 +89,7 @@
             </ctrl:GroupBox>
 
 
-            <StackPanel Grid.Row="3" Spacing="10">
+            <StackPanel Grid.Row="4" Spacing="10">
                 <!-- ===== Blockwise ===== -->
                 <ctrl:GroupBox Header="Blockwise (RFC7959)">
                     <StackPanel Spacing="6">
@@ -126,9 +135,9 @@
                     </Grid>
                 </ctrl:GroupBox>
 
-                <!-- ===== Response CBOR Tree ===== -->
+                <!-- ===== Response CBOR Log ===== -->
                 <ctrl:GroupBox Header="Response CBOR (decoded / pretty)">
-                    <TextBox Text="{Binding ResponseCborTree}" AcceptsReturn="True" IsReadOnly="True" Height="220"/>
+                    <TextBox Text="{Binding ResponseCborLog}" AcceptsReturn="True" IsReadOnly="True" Height="220"/>
                 </ctrl:GroupBox>
 
                 <!-- ===== Traffic Log ===== -->
@@ -138,7 +147,7 @@
             </StackPanel>
 
             <!-- Log -->
-            <ctrl:GroupBox Grid.Row="4" Header="Response Payload">
+            <ctrl:GroupBox Grid.Row="5" Header="Response Payload">
                 <TabControl>
 
                     <TabItem Header="Text">

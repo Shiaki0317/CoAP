@@ -1,9 +1,5 @@
-using System;
-using System.IO;
 using System.Reflection;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace CoapDesktopSender.Core;
 
@@ -14,6 +10,8 @@ public sealed class CoapSender
         string method,
         byte[] payload,
         bool confirmable,
+        int timeoutMs,
+        int maxRetries,
         bool enableBlock1,
         int block1Num,
         bool block1More,
@@ -25,6 +23,10 @@ public sealed class CoapSender
         CancellationToken ct)
     {
         var log = new StringBuilder();
+
+        // 0以下は安全側に丸め
+        if (timeoutMs <= 0) timeoutMs = 3000;
+        if (maxRetries < 0) maxRetries = 0;
 
         dynamic? lastReq = null;
         dynamic? lastRes = null;
@@ -40,7 +42,6 @@ public sealed class CoapSender
             dynamic req = Activator.CreateInstance(reqType, methodValue)
                 ?? throw new InvalidOperationException("Cannot create CoAP.Request instance");
 
-            // URI / Uri 吸収
             if (!TrySet(req, "URI", uri) && !TrySet(req, "Uri", uri))
                 throw new InvalidOperationException("Cannot set URI on CoAP request (URI/Uri property not found).");
 
@@ -55,11 +56,43 @@ public sealed class CoapSender
             return req;
         }
 
-        // ---- Block1: payload 分割送信 ----
+        // ★ 1回の送信処理（timeout付き）
+        async Task<dynamic> SendOnceAsync(Func<dynamic> createReq, Action<dynamic> setupReq, int attempt, CancellationToken outerCt)
+        {
+            outerCt.ThrowIfCancellationRequested();
+
+            dynamic req = createReq();
+            lastReq = req;
+
+            setupReq(req);
+
+            TryInvoke(req, "Send");
+
+            // Send後にMID/Tokenが確定する実装もあるので、ログはSend後
+            log.AppendLine($"[TX attempt={attempt}]");
+            log.AppendLine(CoapMessageFormat.FormatRequestSummary(req));
+            log.AppendLine(CoapMessageFormat.FormatOptions(req));
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(outerCt);
+            cts.CancelAfter(timeoutMs);
+
+            dynamic res = await WaitForResponseAsync(req, cts.Token);
+            lastRes = res;
+            lastResPayload = GetPayloadBytes(res);
+
+            log.AppendLine(CoapMessageFormat.FormatResponseSummary(res));
+            log.AppendLine(CoapMessageFormat.FormatOptions(res));
+
+            return res;
+        }
+
+        // ---- Block1 は「各ブロック送信」を内部再送させると複雑になるので、まずは非Block1経路の再送を実装 ----
+        // Block1 を使う場合：現状は “ブロック送信の途中でタイムアウトしたら例外” とする（後でブロック単位再送にも拡張可能）
         if (enableBlock1 &&
             payload.Length > 0 &&
             (method.Equals("POST", StringComparison.OrdinalIgnoreCase) || method.Equals("PUT", StringComparison.OrdinalIgnoreCase)))
         {
+            // 既存のBlock1処理（再送は未対応）
             var bp = new BlockParam(block1Num, block1More, block1Szx);
             int blockSize = bp.BlockSize;
             int num = 0;
@@ -81,12 +114,14 @@ public sealed class CoapSender
 
                 TryInvoke(req, "Send");
 
-                // Send後にMID/Tokenが確定する実装もあるので、ログ/summaryはSend後に取る
                 log.AppendLine($"[TX Block1] num={num} m={(more ? 1 : 0)} szx={block1Szx} size={slice.Length}");
                 log.AppendLine(CoapMessageFormat.FormatRequestSummary(req));
                 log.AppendLine(CoapMessageFormat.FormatOptions(req));
 
-                dynamic res = await WaitForResponseAsync(req, ct);
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(timeoutMs);
+
+                dynamic res = await WaitForResponseAsync(req, cts.Token);
                 lastRes = res;
                 lastResPayload = GetPayloadBytes(res);
 
@@ -96,7 +131,6 @@ public sealed class CoapSender
                 num++;
             }
 
-            // Block2 追跡
             if (enableBlock2 && lastRes is not null)
             {
                 var combined = await ReceiveBlock2Async(uri, lastRes, block2Szx, log, ct);
@@ -106,37 +140,87 @@ public sealed class CoapSender
             return BuildResult(lastReq, lastRes, lastResPayload, log);
         }
 
-        // ---- 通常送信 ----
+        // ---- 通常送信：timeout超過時に再送 ----
         {
-            dynamic req = CreateRequest(method);
-            lastReq = req;
+            Exception? lastError = null;
 
-            if (payload.Length > 0)
-                SetPayloadBytes(req, payload);
-
-            // Block2 の要求（任意）
-            if (enableBlock2)
-                AddOption(req, "Block2", Blockwise.Encode(block2Num, false, block2Szx));
-
-            TryInvoke(req, "Send");
-
-            log.AppendLine(CoapMessageFormat.FormatRequestSummary(req));
-            log.AppendLine(CoapMessageFormat.FormatOptions(req));
-
-            dynamic res = await WaitForResponseAsync(req, ct);
-            lastRes = res;
-            lastResPayload = GetPayloadBytes(res);
-
-            log.AppendLine(CoapMessageFormat.FormatResponseSummary(res));
-            log.AppendLine(CoapMessageFormat.FormatOptions(res));
-
-            if (enableBlock2)
+            for (int attempt = 0; attempt <= maxRetries; attempt++)
             {
-                var combined = await ReceiveBlock2Async(uri, res, block2Szx, log, ct);
-                return BuildResult(lastReq, lastRes, combined, log);
+                try
+                {
+                    dynamic res = await SendOnceAsync(
+                        createReq: () => CreateRequest(method),
+                        setupReq: req =>
+                        {
+                            if (payload.Length > 0) SetPayloadBytes(req, payload);
+
+                            // Block2 を要求（任意）
+                            if (enableBlock2)
+                                AddOption(req, "Block2", Blockwise.Encode(block2Num, false, block2Szx));
+                        },
+                        attempt: attempt,
+                        outerCt: ct
+                    );
+
+                    // Block2追跡（成功時のみ）
+                    if (enableBlock2)
+                    {
+                        var combined = await ReceiveBlock2Async(uri, res, block2Szx, log, ct);
+                        return BuildResult(lastReq, lastRes, combined, log);
+                    }
+
+                    return BuildResult(lastReq, lastRes, lastResPayload, log);
+                }
+                catch (OperationCanceledException oce)
+                {
+                    // timeout or user cancel
+                    // ユーザキャンセルと区別したいなら ct.IsCancellationRequested を見る
+                    if (ct.IsCancellationRequested)
+                        throw;
+
+                    lastError = oce;
+                    log.AppendLine($"[TIMEOUT] attempt={attempt} timeoutMs={timeoutMs}");
+
+                    if (attempt >= maxRetries)
+                        break;
+
+                    // すぐ再送（必要ならここに delay を入れる）
+                    continue;
+                }
+                catch (TimeoutException te)
+                {
+                    lastError = te;
+                    log.AppendLine($"[TIMEOUT] attempt={attempt} timeoutMs={timeoutMs}");
+
+                    if (attempt >= maxRetries)
+                        break;
+
+                    continue;
+                }
+                catch (Exception ex)
+                {
+                    // その他例外は再送しても改善しないことが多いので即終了
+                    lastError = ex;
+                    log.AppendLine($"[ERROR] attempt={attempt}: {ex.GetType().Name}: {ex.Message}");
+                    break;
+                }
             }
 
-            return BuildResult(lastReq, lastRes, lastResPayload, log);
+            // ここに来たら全試行失敗
+            log.AppendLine("[FAILED] all attempts exhausted");
+            if (lastError is not null) log.AppendLine(lastError.ToString());
+
+            return new CoapSendResult(
+                Ok: false,
+                Log: log.ToString().TrimEnd(),
+                TextLog: null,
+                CborLog: null,
+                BinaryLog: null,
+                RequestSummary: lastReq is null ? null : CoapMessageFormat.FormatRequestSummary(lastReq),
+                ResponseSummary: lastRes is null ? null : CoapMessageFormat.FormatResponseSummary(lastRes),
+                RequestOptions: lastReq is null ? null : CoapMessageFormat.FormatOptions(lastReq),
+                ResponseOptions: lastRes is null ? null : CoapMessageFormat.FormatOptions(lastRes)
+            );
         }
     }
 
@@ -197,7 +281,7 @@ public sealed class CoapSender
         }
     }
 
-    // ===== Result（Request Summary/Options を確実に詰める） =====
+    // ===== Result =====
     private static CoapSendResult BuildResult(dynamic? request, dynamic? response, byte[]? responsePayload, StringBuilder log)
     {
         string? textLog = null;
@@ -224,11 +308,9 @@ public sealed class CoapSender
         return new CoapSendResult(
             Ok: response is not null,
             Log: log.ToString().TrimEnd(),
-
             TextLog: textLog,
             CborLog: cborLog,
             BinaryLog: binaryLog,
-
             RequestSummary: request is null ? null : CoapMessageFormat.FormatRequestSummary(request),
             ResponseSummary: response is null ? null : CoapMessageFormat.FormatResponseSummary(response),
             RequestOptions: request is null ? null : CoapMessageFormat.FormatOptions(request),
@@ -237,7 +319,6 @@ public sealed class CoapSender
     }
 
     // ====== CoAP.NET API吸収（反射ヘルパー） ======
-
     private static dynamic GetCoapMethod(string method)
     {
         var m = (method ?? "").Trim().ToUpperInvariant();
@@ -248,7 +329,7 @@ public sealed class CoapSender
             if (t.IsEnum) return Enum.Parse(t, m, ignoreCase: true);
 
             var v = t.GetField(m)?.GetValue(null)
-                 ?? t.GetProperty(m)?.GetValue(null);
+                    ?? t.GetProperty(m)?.GetValue(null);
             if (v is not null) return v;
         }
 
@@ -264,7 +345,7 @@ public sealed class CoapSender
             if (alt.IsEnum) return Enum.Parse(alt, m, ignoreCase: true);
 
             var v = alt.GetField(m)?.GetValue(null)
-                 ?? alt.GetProperty(m)?.GetValue(null);
+                    ?? alt.GetProperty(m)?.GetValue(null);
             if (v is not null) return v;
         }
 
@@ -281,7 +362,7 @@ public sealed class CoapSender
             if (t.IsEnum) return Enum.Parse(t, tname, ignoreCase: true);
 
             var v = t.GetField(tname)?.GetValue(null)
-                 ?? t.GetProperty(tname)?.GetValue(null);
+                    ?? t.GetProperty(tname)?.GetValue(null);
             if (v is not null) return v;
         }
 
@@ -296,7 +377,7 @@ public sealed class CoapSender
             if (alt.IsEnum) return Enum.Parse(alt, tname, ignoreCase: true);
 
             var v = alt.GetField(tname)?.GetValue(null)
-                 ?? alt.GetProperty(tname)?.GetValue(null);
+                    ?? alt.GetProperty(tname)?.GetValue(null);
             if (v is not null) return v;
         }
 
@@ -305,14 +386,12 @@ public sealed class CoapSender
 
     private static Type? FindTypeByFullName(string fullName)
     {
-        // 1) まずロード済みから
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
             var t = asm.GetType(fullName, throwOnError: false, ignoreCase: false);
             if (t is not null) return t;
         }
 
-        // 2) 参照アセンブリをロードして探す
         var current = typeof(CoapSender).Assembly;
         foreach (var an in current.GetReferencedAssemblies())
         {
@@ -325,7 +404,6 @@ public sealed class CoapSender
             catch { }
         }
 
-        // 3) 追加保険
         foreach (var name in new[] { "CoAP", "CoAP.NET", "CoAPNet", "CoAPnet" })
         {
             try
@@ -448,7 +526,7 @@ public sealed class CoapSender
 
             var t = req.GetType();
             var mi = t.GetMethod("WaitForResponse", Type.EmptyTypes)
-                  ?? t.GetMethod("GetResponse", Type.EmptyTypes);
+                    ?? t.GetMethod("GetResponse", Type.EmptyTypes);
 
             if (mi is null)
                 throw new InvalidOperationException("No WaitForResponse/GetResponse method on CoAP.Request.");
